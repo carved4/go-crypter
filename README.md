@@ -51,11 +51,11 @@ The project consists of two main components:
 
 ```mermaid
 flowchart TD
-    A["Stub Execution Starts"] --> B["Decrypt Embedded CBOR Payload"]
+    A["Stub Execution Starts"] --> B["Decrypt Embedded Payload"]
     B --> C["Extract Payload Metadata"]
     C --> D["Decompress if Compressed"]
     D --> E["Self-Delete Executable"]
-    E --> F["Apply Anti-Monitoring Patches"]
+    E --> F["Apply AMSI/ETW Patches"]
     F --> G{"Check Payload Type"}
     G -->|Shellcode| H["Execute via NtInjectSelfShellcode"]
     G -->|PE Executable| I["Execute via RunPE"]
