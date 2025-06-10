@@ -105,7 +105,7 @@ flowchart TD
 
 ```bash
 # Build the encryption tool
-go build -ld-o crypt.exe ./crypt
+go build -o crypt.exe ./crypt
 
 # Build the stub (after encrypting a payload)
 go build -o stub.exe ./stub
