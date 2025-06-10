@@ -16,7 +16,7 @@ A cryptographic payload loader and executor designed for advanced in-memory exec
 - **Shellcode injection**: Direct shellcode execution using advanced injection techniques
 
 ### Evasion Features
-- **Self-deletion**: Automatic removal of the stub executable from disk
+- **Self-deletion**: Automatic removal of the stub executable from disk (this being called prior to execution may seem weird, but as long as your payload is mapped into memory already (it is, it's embedded) execution will fire off, and the stub gets removed)
 - **Anti-monitoring patches**: Disables AMSI, ETW, debugging, and trace logging
 - **Direct syscalls**: Utilizes [go-direct-syscall](https://github.com/carved4/go-direct-syscall) for API evasion
 - **Memory-only execution**: No disk artifacts after initial execution
