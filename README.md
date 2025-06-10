@@ -62,9 +62,16 @@ flowchart TD
     H --> J["Payload Running in Memory"]
     I --> J
     
-    style A fill:#e1f5fe
-    style J fill:#c8e6c9
-    style F fill:#fff3e0
+    style A fill:#e1f5fe,stroke:#000,stroke-width:2px,color:#000
+    style B fill:#f5f5f5,stroke:#000,stroke-width:2px,color:#000
+    style C fill:#f5f5f5,stroke:#000,stroke-width:2px,color:#000
+    style D fill:#f5f5f5,stroke:#000,stroke-width:2px,color:#000
+    style E fill:#f5f5f5,stroke:#000,stroke-width:2px,color:#000
+    style F fill:#fff3e0,stroke:#000,stroke-width:2px,color:#000
+    style G fill:#f5f5f5,stroke:#000,stroke-width:2px,color:#000
+    style H fill:#f5f5f5,stroke:#000,stroke-width:2px,color:#000
+    style I fill:#f5f5f5,stroke:#000,stroke-width:2px,color:#000
+    style J fill:#c8e6c9,stroke:#000,stroke-width:2px,color:#000
 ```
 
 ## Technical Details
