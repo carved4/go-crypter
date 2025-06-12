@@ -302,7 +302,7 @@ func GhostStack(shellcode []byte) error {
 }
 
 // PhantomAPC executes shellcode using APC injection via NtQueueApcThreadEx
-// This is absolutely MENTAL - uses Asynchronous Procedure Call injection with direct syscalls
+
 func PhantomAPC(shellcode []byte) error {
 	if len(shellcode) == 0 {
 		return fmt.Errorf("shellcode cannot be empty")

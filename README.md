@@ -111,6 +111,23 @@ go build -o crypt.exe ./crypt
 go build -o stub.exe ./stub
 ```
 
+## Running
+```bash
+# after running the crypter tool and building the stub, you can pass some flags to specify how you want to run
+
+./stub.exe -sleepy # self inject with page no access delay to trip EDRs
+
+./stub.exe -ghost # self inject standard
+
+./stub.exe -phantom # inject with queueapc + page no access delay 
+
+# or 
+
+./stub.exe # with no flags to run an embedded EXE or shellcode with the default methods
+
+```
+
+
 ## Security Considerations
 
 This tool is designed for security research, penetration testing, and red team exercises. Users are responsible for ensuring compliance with applicable laws and regulations in their jurisdiction. 
