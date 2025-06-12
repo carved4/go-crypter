@@ -1,11 +1,11 @@
 package runpe
 
 import (
+	"fmt"
+	"github.com/Binject/debug/pe"
 	"strconv"
 	"syscall"
 	"unsafe"
-	"fmt"
-	"github.com/Binject/debug/pe"
 )
 
 // ResolveImports patches the import address table in-place using direct memory access.
@@ -105,6 +105,10 @@ func ResolveImports(peFile *pe.File, baseAddress uintptr) error {
 			if (ptrSize == 8 && (thunkVal>>63) != 0) || (ptrSize == 4 && (thunkVal>>31) != 0) {
 				ord := uint16(thunkVal & 0xFFFF)
 				procAddr, err = syscall.GetProcAddress(hMod, "#"+strconv.Itoa(int(ord)))
+				if err != nil {
+					procAddr = 0 // Set to NULL for missing ordinals - mimikatz can handle this!
+					err = nil    // Clear error to continue
+				}
 			} else {
 				// Name RVA + skip hint (2 bytes)
 				nameOff := uint32(thunkVal&0xFFFFFFFF) + 2
@@ -113,7 +117,12 @@ func ResolveImports(peFile *pe.File, baseAddress uintptr) error {
 				for nameData[k] != 0 {
 					k++
 				}
-				procAddr, err = syscall.GetProcAddress(hMod, string(nameData[:k]))
+				funcName := string(nameData[:k])
+				procAddr, err = syscall.GetProcAddress(hMod, funcName)
+				if err != nil {
+					procAddr = 0 // Set to NULL for missing functions - allow graceful degradation
+					err = nil    // Clear error to continue
+				}
 			}
 			if err != nil {
 				return fmt.Errorf("GetProcAddress failed: %w", err)

