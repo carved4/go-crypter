@@ -6,7 +6,7 @@ import (
 	"strings"
 	"unsafe"
 
-	"github.com/carved4/go-direct-syscall"
+	"github.com/carved4/go-native-syscall"
 )
 
 type ProcessInfo struct {

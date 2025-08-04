@@ -5,6 +5,8 @@ go 1.23.10
 require (
 	github.com/Binject/debug v0.0.0-20230508195519-26db73212a7a
 	github.com/carved4/go-direct-syscall v1.2.4
+	github.com/carved4/go-native-syscall v1.3.5
+	github.com/carved4/go-wincall v1.0.4
 	github.com/fxamacker/cbor/v2 v2.8.0
 	golang.org/x/crypto v0.39.0
 )
