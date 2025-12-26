@@ -18,15 +18,15 @@ into a loader that offers multiple execution options for shellcode, pe's are jus
 ## features
 
 ### encryption & compression
-- **Multiple encryption algorithms**: ChaCha20-Poly1305, AES-GCM, Twofish-GCM
-- **Argon2id key derivation** with configurable parameters for enhanced security
-- **Automatic compression** using zlib to reduce payload size
+- **multiple encryption algorithms**: ChaCha20-Poly1305, AES-GCM, Twofish-GCM
+- **argon2id key derivation** with configurable parameters for enhanced security
+- **automatic compression** using zlib to reduce payload size
 - **CBOR serialization** for efficient binary encoding
 
 ### capabilities 
-- **Dual payload support**: handles both raw shellcode and PE executables
-- **In-memory PE execution**: Full runpe implementation with proper relocation and import resolution
-- **Shellcode injection**: direct shellcode execution using some silly injection techniques
+- **dual payload support**: handles both raw shellcode and PE executables
+- **in-memory PE execution**: Full runpe implementation with proper relocation and import resolution
+- **shellcode injection**: direct shellcode execution using some silly injection techniques
 
 
 ### encrypting payloads
@@ -40,11 +40,9 @@ go run crypt.go payload.exe -alg aesgcm
 ```
 
 ### available options
-- `-alg`: Encryption algorithm (chacha20, aesgcm, twofish)
+- `-alg`: encryption algorithm (chacha20, aesgcm, twofish)
 
 ## architecture
-
-The project consists of two main components:
 
 1. **crypt**: encrypts and packages payloads into CBOR format with embedded metadata
 2. **stub**: self-contained executable that decrypts and executes the embedded payload
