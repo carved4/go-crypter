@@ -1,133 +1,73 @@
 # go-crypter
 
-A cryptographic payload loader and executor designed for advanced in-memory execution techniques. This project combines strong encryption, compression, and sophisticated evasion capabilities to execute both shellcode and PE files directly in memory.
+this is a loader that consists of two parts - the encrypter and the loader, both PEs and shellcode can be encrypted and embedded
+into a loader that offers multiple execution options for shellcode, pe's are just mapped and their entry point is executed with ntdll!rtlcreateuserthread. for shellcode, you can take a few different paths each with their own upsides and downsides evasion wise. this project is meant to be compiled on win10+ x64 only.
 
-## Features
+# enclave
+1. uses mscoree!GetProcessExecutableHeap, vdsutil!VdsHeapAlloc, and ntdll!LdrCallEnclave
+2. memory region of shellcode is RWX by default, as GetProcessExecutableHeap is usually used for JIT stuff
 
-### Encryption & Compression
+# indirect syscalls
+1. uses ntdll!NtAllocateVirtualMemory, ntdll!ProtectVirtualMemory to allocate memory and flip prots (takes PAGE_READWRITE -> PAGE_EXECUTE_READ path
+2. uses ntdll!RtlCreateUserThread to execute entry point
+
+# run once
+1. uses ntdll!NtAllocateVirtualMemory, ntdll!ProtectVirtualMemory to allocate memory and flip prots (also takes PAGE_READWRITE -> PAGE_EXECUTE_READ path
+2. executes entry point with ntdll!RtlRunOnceExecuteOnce which does exactly what it says
+
+## features
+
+### encryption & compression
 - **Multiple encryption algorithms**: ChaCha20-Poly1305, AES-GCM, Twofish-GCM
 - **Argon2id key derivation** with configurable parameters for enhanced security
 - **Automatic compression** using zlib to reduce payload size
 - **CBOR serialization** for efficient binary encoding
 
-### Execution Capabilities
-- **Dual payload support**: Handles both raw shellcode and PE executables
-- **In-memory PE execution**: Full RunPE implementation with proper relocation and import resolution
-- **Shellcode injection**: Direct shellcode execution using advanced injection techniques
+### capabilities 
+- **Dual payload support**: handles both raw shellcode and PE executables
+- **In-memory PE execution**: Full runpe implementation with proper relocation and import resolution
+- **Shellcode injection**: direct shellcode execution using some silly injection techniques
 
-### Evasion Features
-- **Self-deletion**: Automatic removal of the stub executable from disk (this being called prior to execution may seem weird, but as long as your payload is mapped into memory already (it is, it's embedded) execution will fire off, and the stub gets removed)
-- **Anti-monitoring patches**: Disables AMSI, ETW, debugging, and trace logging
-- **Direct syscalls**: Utilizes [go-direct-syscall](https://github.com/carved4/go-direct-syscall) for API evasion
-- **Memory-only execution**: No disk artifacts after initial execution
 
-## Usage
-
-### Encrypting Payloads
+### encrypting payloads
 
 ```bash
-# Encrypt shellcode (default)
-./crypt -type shellcode payload.bin
+# encrypt shellcode (default, used chacha20) 
+go run crypt.go payload.bin
 
-# Encrypt PE executable
-./crypt -type exe malware.exe
-
-# Specify encryption algorithm
-./crypt -alg chacha20 -type exe payload.exe
+# encrypt PE executable with aesgcm
+go run crypt.go payload.exe -alg aesgcm 
 ```
 
-### Available Options
+### available options
 - `-alg`: Encryption algorithm (chacha20, aesgcm, twofish)
-- `-type`: Payload type (shellcode, exe)
 
-## Architecture
+## architecture
 
 The project consists of two main components:
 
-1. **Crypt**: Encrypts and packages payloads into CBOR format with embedded metadata
-2. **Stub**: Self-contained executable that decrypts and executes the embedded payload
-
-## Execution Flow
-
-```mermaid
-flowchart TD
-    A["Stub Execution Starts"] --> B["Decrypt Embedded Payload"]
-    B --> C["Extract Payload Metadata"]
-    C --> D["Decompress if Compressed"]
-    D --> E["Self-Delete Executable"]
-    E --> F["Apply AMSI/ETW Patches"]
-    F --> G{"Check Payload Type"}
-    G -->|Shellcode| H["Execute via NtInjectSelfShellcode"]
-    G -->|PE Executable| I["Execute via RunPE"]
-    H --> J["Payload Running in Memory"]
-    I --> J
-    
-    style A fill:#e1f5fe,stroke:#000,stroke-width:2px,color:#000
-    style B fill:#f5f5f5,stroke:#000,stroke-width:2px,color:#000
-    style C fill:#f5f5f5,stroke:#000,stroke-width:2px,color:#000
-    style D fill:#f5f5f5,stroke:#000,stroke-width:2px,color:#000
-    style E fill:#f5f5f5,stroke:#000,stroke-width:2px,color:#000
-    style F fill:#fff3e0,stroke:#000,stroke-width:2px,color:#000
-    style G fill:#f5f5f5,stroke:#000,stroke-width:2px,color:#000
-    style H fill:#f5f5f5,stroke:#000,stroke-width:2px,color:#000
-    style I fill:#f5f5f5,stroke:#000,stroke-width:2px,color:#000
-    style J fill:#c8e6c9,stroke:#000,stroke-width:2px,color:#000
-```
-
-## Technical Details
-
-### Cryptographic Implementation
-- **Key derivation**: Argon2id with configurable time, memory, and thread parameters
-- **Authentication**: All algorithms provide authenticated encryption (AEAD)
-- **Random generation**: Cryptographically secure random passwords, salts, and nonces
-
-### Anti-Detection Mechanisms
-- **PatchAMSI**: Disable Anti-Malware Scan Interface
-- **PatchETW**: Disable Event Tracing for Windows  
-- **PatchDbgUiRemoteBreakin**: Prevent remote debugger attachment
-- **PatchNtTraceEvent**: Prevent trace event logging
-- **PatchNtSystemDebugControl**: Prevent debug control operations
-
-### Memory Execution
-- **Section mapping**: Uses NtCreateSection and NtMapViewOfSection for memory allocation
-- **Import resolution**: Dynamically resolves imported functions
-- **Relocation handling**: Properly handles address relocations for ASLR
-- **TLS callbacks**: Executes Thread Local Storage initialization routines
-
-## Dependencies
-
-- `github.com/carved4/go-direct-syscall` - Direct Windows syscall interface
-- `github.com/Binject/debug` - PE file parsing and manipulation
-- `github.com/fxamacker/cbor/v2` - CBOR encoding/decoding
-- `golang.org/x/crypto` - Cryptographic algorithms
+1. **crypt**: encrypts and packages payloads into CBOR format with embedded metadata
+2. **stub**: self-contained executable that decrypts and executes the embedded payload
 
 ## Building
 
 ```bash
-# Build the encryption tool
-go build -o crypt.exe ./crypt
-
-# Build the stub (after encrypting a payload)
-go build -o stub.exe ./stub
+# build the stub (after encrypting a payload)
+cd ../stub && go build -o stub.exe
 ```
 
-## Running
+## running
 ```bash
 # after running the crypter tool and building the stub, you can pass some flags to specify how you want to run
 
-./stub.exe -sleepy # self inject with page no access delay to trip EDRs
+./stub.exe -enclave
 
-./stub.exe -ghost # self inject standard
+./stub.exe -indirec
 
-./stub.exe -phantom # inject with queueapc + page no access delay 
+./stub.exe -once
 
 # or 
 
 ./stub.exe # with no flags to run an embedded EXE or shellcode with the default methods
 
 ```
-
-
-## Security Considerations
-
-This tool is designed for security research, penetration testing, and red team exercises. Users are responsible for ensuring compliance with applicable laws and regulations in their jurisdiction. 
