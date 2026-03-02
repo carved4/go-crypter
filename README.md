@@ -1,71 +1,77 @@
 # go-crypter
 
-this is a loader that consists of two parts - the encrypter and the loader, both PEs and shellcode can be encrypted and embedded
-into a loader that offers multiple execution options for shellcode, pe's are just mapped and their entry point is executed with ntdll!rtlcreateuserthread. for shellcode, you can take a few different paths each with their own upsides and downsides evasion wise. this project is meant to be compiled on win10+ x64 only.
+loader consisting of two parts, an encrypter and a stub. both PEs and shellcode can be encrypted and embedded. PE payloads are mapped in-memory with full relocation and import resolution, entry point executed via ntdll!RtlCreateUserThread. shellcode has a few execution paths. x64 windows only.
 
-# enclave
-1. uses mscoree!GetProcessExecutableHeap, vdsutil!VdsHeapAlloc, and ntdll!LdrCallEnclave
-2. memory region of shellcode is RWX by default, as GetProcessExecutableHeap is usually used for JIT stuff
+no `syscall` or `golang.org/x/windows` imports anywhere in the stub all winapi calls go through [go-wincall](https://github.com/carved4/go-wincall). decryption in the stub uses bcrypt.dll (WinCNG) via go-wincall rather than Go's crypto stdlib.
 
-# indirect syscalls
-1. uses ntdll!NtAllocateVirtualMemory, ntdll!ProtectVirtualMemory to allocate memory and flip prots (takes PAGE_READWRITE -> PAGE_EXECUTE_READ path
-2. uses ntdll!RtlCreateUserThread to execute entry point
+# key handling
 
-# run once
-1. uses ntdll!NtAllocateVirtualMemory, ntdll!ProtectVirtualMemory to allocate memory and flip prots (also takes PAGE_READWRITE -> PAGE_EXECUTE_READ path
-2. executes entry point with ntdll!RtlRunOnceExecuteOnce which does exactly what it says
+the encryption key is **never stored in the payload**. `crypt` outputs a build command with the hex-encoded password baked in via `-ldflags`. the CBOR blob (salt + nonce + ciphertext) is useless without the stub binary.
+
+# shellcode execution methods
+
+### enclave
+1. mscoree!GetProcessExecutableHeap → vdsutil!VdsHeapAlloc → ntdll!LdrCallEnclave
+2. shellcode lands in an RWX heap region (GetProcessExecutableHeap is normally used for JIT)
+
+### indirect syscalls
+1. NtAllocateVirtualMemory + NtProtectVirtualMemory via indirect syscall (RW → RX)
+2. ntdll!RtlCreateUserThread to execute
+
+### run once
+1. NtAllocateVirtualMemory + NtProtectVirtualMemory via indirect syscall (RW → RX)
+2. ntdll!RtlRunOnceExecuteOnce to execute
 
 ## features
 
-### encryption & compression
-- **multiple encryption algorithms**: ChaCha20-Poly1305, AES-GCM, Twofish-GCM
-- **argon2id key derivation** with configurable parameters for enhanced security
-- **automatic compression** using zlib to reduce payload size
-- **CBOR serialization** for efficient binary encoding
+- **AES-256-GCM** encryption via WinCNG (bcrypt.dll) in the stub
+- **argon2id** key derivation (pure Go, no syscall imports)
+- **zlib compression** before encryption
+- **CBOR** payload serialization
+- **key separation** — password injected at link time, not stored on disk or in the payload
+- **runpe** — in-memory PE loading with relocation, import resolution, TLS callbacks, section protections, PE header wipe, command line scrub
+- **go-wincall** throughout — hash-based function resolution, indirect syscalls, no direct windows imports
 
-### capabilities 
-- **dual payload support**: handles both raw shellcode and PE executables
-- **in-memory PE execution**: Full runpe implementation with proper relocation and import resolution
-- **shellcode injection**: direct shellcode execution using some silly injection techniques
+## usage
 
+### 1. encrypt
 
-### encrypting payloads
-
-```bash
-# encrypt shellcode (default, used chacha20) 
-go run crypt.go payload.bin
-
-# encrypt PE executable with aesgcm
-go run crypt.go payload.exe -alg aesgcm 
+```
+cd crypt
+go run crypt.go <payload.bin|payload.exe>
 ```
 
-### available options
-- `-alg`: encryption algorithm (chacha20, aesgcm, twofish)
-
-## architecture
-
-1. **crypt**: encrypts and packages payloads into CBOR format with embedded metadata
-2. **stub**: self-contained executable that decrypts and executes the embedded payload
-
-## Building
-
-```bash
-# build the stub (after encrypting a payload)
-cd ../stub && go build -o stub.exe
+output:
+```
+[+] compression reduced size from X to Y bytes (Z%)
+[+] encryption completed successfully!
+CBOR payload saved to:
+- ..\stub\payload.cbor
+[+] build stub with:
+    go build -ldflags "-X main.password=<hex>" .
 ```
 
-## running
-```bash
-# after running the crypter tool and building the stub, you can pass some flags to specify how you want to run
+use `-type exe` explicitly if the filename doesn't contain `.exe`:
+```
+go run crypt.go -type exe payload.bin
+```
 
+### 2. build stub
+
+copy the printed build command and run it from the stub directory:
+```
+cd ..\stub
+go build -ldflags "-X main.password=<hex>" .
+```
+
+### 3. run
+
+```
+# PE payload — no flag needed
+./stub.exe
+
+# shellcode — pick an execution method
 ./stub.exe -enclave
-
-./stub.exe -indirec
-
+./stub.exe -indirect
 ./stub.exe -once
-
-# or 
-
-./stub.exe # with no flags to run an embedded EXE or shellcode with the default methods
-
 ```

